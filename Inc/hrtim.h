@@ -1,12 +1,12 @@
 /**
   ******************************************************************************
-  * File Name          : USART.h
+  * File Name          : HRTIM.h
   * Description        : This file provides code for the configuration
-  *                      of the USART instances.
+  *                      of the HRTIM instances.
   ******************************************************************************
   * @attention
   *
-  * <h2><center>&copy; Copyright (c) 2019 STMicroelectronics.
+  * <h2><center>&copy; Copyright (c) 2020 STMicroelectronics.
   * All rights reserved.</center></h2>
   *
   * This software component is licensed by ST under Ultimate Liberty license
@@ -17,8 +17,8 @@
   ******************************************************************************
   */
 /* Define to prevent recursive inclusion -------------------------------------*/
-#ifndef __usart_H
-#define __usart_H
+#ifndef __hrtim_H
+#define __hrtim_H
 #ifdef __cplusplus
  extern "C" {
 #endif
@@ -30,14 +30,16 @@
 
 /* USER CODE END Includes */
 
-extern UART_HandleTypeDef huart6;
+extern HRTIM_HandleTypeDef hhrtim;
 
 /* USER CODE BEGIN Private defines */
 
 /* USER CODE END Private defines */
 
-void MX_USART6_UART_Init(void);
-
+void MX_HRTIM_Init(void);
+                        
+void HAL_HRTIM_MspPostInit(HRTIM_HandleTypeDef *hhrtim);
+                    
 /* USER CODE BEGIN Prototypes */
 
 /* USER CODE END Prototypes */
@@ -45,7 +47,7 @@ void MX_USART6_UART_Init(void);
 #ifdef __cplusplus
 }
 #endif
-#endif /*__ usart_H */
+#endif /*__ hrtim_H */
 
 /**
   * @}

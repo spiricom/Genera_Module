@@ -48,9 +48,12 @@ extern "C" {
 
 /* Exported macro ------------------------------------------------------------*/
 /* USER CODE BEGIN EM */
+#define __ATTR_RAM_D1	__attribute__ ((section(".RAM_D1"))) __attribute__ ((aligned (32)))
 #define __ATTR_RAM_D2	__attribute__ ((section(".RAM_D2"))) __attribute__ ((aligned (32)))
 #define __ATTR_RAM_D3	__attribute__ ((section(".RAM_D3"))) __attribute__ ((aligned (32)))
+#define __ATTR_SDRAM	__attribute__ ((section(".SDRAM"))) __attribute__ ((aligned (32)))
 
+#define STM32 // define this so that LEAF knows you are building for STM32
 /* USER CODE END EM */
 
 /* Exported functions prototypes ---------------------------------------------*/
@@ -58,6 +61,11 @@ void Error_Handler(void);
 
 /* USER CODE BEGIN EFP */
 float randomNumber(void);
+void startTimersForLEDs(void);
+static void HardFault_Handler(void) __attribute__ ((naked));
+void prvGetRegistersFromStack( uint32_t *pulFaultStackAddress );
+void writeIntToFlash(uint32_t data, uint32_t location);
+uint32_t readIntFromFlash (uint32_t location);
 /* USER CODE END EFP */
 
 /* Private defines -----------------------------------------------------------*/

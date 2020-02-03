@@ -23,14 +23,12 @@
 #include "adc.h"
 #include "dma.h"
 #include "fatfs.h"
+#include "hrtim.h"
 #include "i2c.h"
 #include "rng.h"
 #include "sai.h"
 #include "sdmmc.h"
-#include "spi.h"
 #include "tim.h"
-#include "usart.h"
-#include "usb_otg.h"
 #include "gpio.h"
 #include "fmc.h"
 
@@ -39,6 +37,7 @@
 #include "ui.h"
 #include "leaf.h"
 #include "audiostream.h"
+#include "eeprom.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -59,6 +58,13 @@
 /* Private variables ---------------------------------------------------------*/
 
 /* USER CODE BEGIN PV */
+uint16_t count;
+
+//FLASH storage EEPROM emulation variables
+FLASH_OBProgramInitTypeDef OBInit;
+uint16_t VarDataTab = 0;
+uint16_t VarValue = 0;
+volatile uint32_t tempFPURegisterVal;
 
 /* USER CODE END PV */
 
@@ -66,6 +72,7 @@
 void SystemClock_Config(void);
 /* USER CODE BEGIN PFP */
 void MPU_Conf(void);
+void SDRAM_Initialization_sequence(void);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -97,6 +104,12 @@ int main(void)
 
   /* USER CODE BEGIN Init */
 
+  //disabling I and D cache because they cause issues with the USB initialization when -o3 optimization is on
+  /* Enable I-Cache---------------------------------------------------------*/
+  SCB_DisableICache();
+
+  /* Enable D-Cache---------------------------------------------------------*/
+  SCB_DisableDCache();
   /* USER CODE END Init */
 
   /* Configure the system clock */
@@ -112,47 +125,96 @@ int main(void)
   MX_DMA_Init();
   MX_FMC_Init();
   MX_ADC1_Init();
-  MX_ADC3_Init();
   MX_I2C2_Init();
-  MX_SDMMC1_SD_Init();
-  MX_SPI1_Init();
-  MX_USB_OTG_FS_HCD_Init();
-  MX_FATFS_Init();
+  //MX_SDMMC1_SD_Init();
+  //MX_FATFS_Init();
   MX_SAI1_Init();
-  MX_TIM3_Init();
-  MX_TIM4_Init();
-  MX_TIM7_Init();
-  MX_TIM1_Init();
-  MX_USART6_UART_Init();
   MX_RNG_Init();
+  MX_HRTIM_Init();
+  //MX_TIM3_Init();
+  //MX_TIM4_Init();
+
   /* USER CODE BEGIN 2 */
-	//HAL_Delay(200);
+  /// it seems we need to enable caching after setting up the USB Host Controller -
+  // otherwise turning on -o3 optimization causes unreliable behavior where it's not set up correctly and never reaches the USB interrupt for connection
+  /* Enable I-Cache---------------------------------------------------------*/
+  SCB_EnableICache();
+
+  /* Enable D-Cache---------------------------------------------------------*/
+  SCB_EnableDCache();
+
+  startTimersForLEDs();
+  //HAL_Delay(1);
+  // Emulated EEPROM Init
+  HAL_FLASH_Unlock();
+
+
+
+
+
+
+
+
+  if( EE_Init() != EE_OK)
+  {
+    Error_Handler();
+  }
+  if((EE_ReadVariable(VirtAddVarTab[0],  &VarDataTab)) != HAL_OK) // read what the preset was before last power-off
+  {
+	//if it can't read something, it's probably because this brain has never been programmed, so write a value in there to start with
+	  if((EE_WriteVariable(VirtAddVarTab[0],  PresetNil)) != HAL_OK)
+	{
+		Error_Handler();
+	}
+  }
+  if (VarDataTab < PresetNil) //make sure the stored data is a number not past the number of available presets
+  {
+	  currentPreset = VarDataTab; //if it's good, start at that remembered preset number
+  }
+  else
+  {
+	  currentPreset = 0; //if the data is messed up for some reason, just initialize at the first preset (preset 0)
+  }
+
+
+
+
+
   //pull reset pin on audio codec low to make sure it's stable
   HAL_GPIO_WritePin(GPIOC, GPIO_PIN_14, GPIO_PIN_RESET);
 
-  uint32_t tempFPURegisterVal = __get_FPSCR();
-  tempFPURegisterVal |= (1<<24); // set the FTZ (flush-to-zero) bit in the FPU control register
+
+  tempFPURegisterVal = __get_FPSCR();
+  tempFPURegisterVal |= ((1<<24) + (1<<25)); // set the FTZ (flush-to-zero) bit in the FPU control register - this fixes denormals, but not NaNs
   __set_FPSCR(tempFPURegisterVal);
+
+
+  HAL_ADCEx_Calibration_Start(&hadc1, ADC_CALIB_OFFSET, ADC_SINGLE_ENDED);
 
   if (HAL_ADC_Start_DMA(&hadc1,(uint32_t*)&ADC_values, NUM_ADC_CHANNELS) != HAL_OK)
 	{
 	  Error_Handler();
 	}
-  HAL_GPIO_WritePin(GPIOC, GPIO_PIN_6, GPIO_PIN_SET);
+
   HAL_Delay(10);
+
+  SDRAM_Initialization_sequence();
+
   audioInit(&hi2c2, &hsai_BlockA1, &hsai_BlockB1);
-  //HAL_GPIO_WritePin(GPIOB, GPIO_PIN_15, GPIO_PIN_SET);
-  //HAL_GPIO_WritePin(GPIOD, GPIO_PIN_12, GPIO_PIN_SET);
+
   /* USER CODE END 2 */
+ 
+ 
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
+
+
   }
   /* USER CODE END 3 */
 }
@@ -172,7 +234,7 @@ void SystemClock_Config(void)
   HAL_PWREx_ConfigSupply(PWR_LDO_SUPPLY);
   /** Configure the main internal regulator output voltage 
   */
-  __HAL_PWR_VOLTAGESCALING_CONFIG(PWR_REGULATOR_VOLTAGE_SCALE1);
+  __HAL_PWR_VOLTAGESCALING_CONFIG(PWR_REGULATOR_VOLTAGE_SCALE0);
 
   while(!__HAL_PWR_GET_FLAG(PWR_FLAG_VOSRDY)) {}
   /** Macro to configure the PLL clock source 
@@ -185,12 +247,12 @@ void SystemClock_Config(void)
   RCC_OscInitStruct.HSI48State = RCC_HSI48_ON;
   RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
   RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSE;
-  RCC_OscInitStruct.PLL.PLLM = 5;
-  RCC_OscInitStruct.PLL.PLLN = 160;
+  RCC_OscInitStruct.PLL.PLLM = 10;
+  RCC_OscInitStruct.PLL.PLLN = 384;
   RCC_OscInitStruct.PLL.PLLP = 2;
-  RCC_OscInitStruct.PLL.PLLQ = 2;
+  RCC_OscInitStruct.PLL.PLLQ = 3;
   RCC_OscInitStruct.PLL.PLLR = 2;
-  RCC_OscInitStruct.PLL.PLLRGE = RCC_PLL1VCIRANGE_2;
+  RCC_OscInitStruct.PLL.PLLRGE = RCC_PLL1VCIRANGE_1;
   RCC_OscInitStruct.PLL.PLLVCOSEL = RCC_PLL1VCOWIDE;
   RCC_OscInitStruct.PLL.PLLFRACN = 0;
   if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK)
@@ -210,47 +272,127 @@ void SystemClock_Config(void)
   RCC_ClkInitStruct.APB2CLKDivider = RCC_APB2_DIV2;
   RCC_ClkInitStruct.APB4CLKDivider = RCC_APB4_DIV2;
 
-  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_2) != HAL_OK)
+  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_4) != HAL_OK)
   {
     Error_Handler();
   }
-  PeriphClkInitStruct.PeriphClockSelection = RCC_PERIPHCLK_USART6|RCC_PERIPHCLK_RNG
-                              |RCC_PERIPHCLK_SPI1|RCC_PERIPHCLK_SAI1
-                              |RCC_PERIPHCLK_SDMMC|RCC_PERIPHCLK_I2C2
-                              |RCC_PERIPHCLK_ADC|RCC_PERIPHCLK_USB
+  PeriphClkInitStruct.PeriphClockSelection = RCC_PERIPHCLK_HRTIM1|RCC_PERIPHCLK_RNG
+                              |RCC_PERIPHCLK_SAI1|RCC_PERIPHCLK_SDMMC
+                              |RCC_PERIPHCLK_I2C2|RCC_PERIPHCLK_ADC
                               |RCC_PERIPHCLK_FMC;
   PeriphClkInitStruct.PLL2.PLL2M = 25;
   PeriphClkInitStruct.PLL2.PLL2N = 344;
   PeriphClkInitStruct.PLL2.PLL2P = 7;
   PeriphClkInitStruct.PLL2.PLL2Q = 2;
-  PeriphClkInitStruct.PLL2.PLL2R = 2;
+  PeriphClkInitStruct.PLL2.PLL2R = 1;
   PeriphClkInitStruct.PLL2.PLL2RGE = RCC_PLL2VCIRANGE_0;
   PeriphClkInitStruct.PLL2.PLL2VCOSEL = RCC_PLL2VCOWIDE;
   PeriphClkInitStruct.PLL2.PLL2FRACN = 0;
   PeriphClkInitStruct.FmcClockSelection = RCC_FMCCLKSOURCE_D1HCLK;
   PeriphClkInitStruct.SdmmcClockSelection = RCC_SDMMCCLKSOURCE_PLL;
   PeriphClkInitStruct.Sai1ClockSelection = RCC_SAI1CLKSOURCE_PLL2;
-  PeriphClkInitStruct.Spi123ClockSelection = RCC_SPI123CLKSOURCE_PLL;
-  PeriphClkInitStruct.Usart16ClockSelection = RCC_USART16CLKSOURCE_D2PCLK2;
   PeriphClkInitStruct.RngClockSelection = RCC_RNGCLKSOURCE_HSI48;
   PeriphClkInitStruct.I2c123ClockSelection = RCC_I2C123CLKSOURCE_D2PCLK1;
-  PeriphClkInitStruct.UsbClockSelection = RCC_USBCLKSOURCE_HSI48;
   PeriphClkInitStruct.AdcClockSelection = RCC_ADCCLKSOURCE_PLL2;
+  PeriphClkInitStruct.Hrtim1ClockSelection = RCC_HRTIM1CLK_CPUCLK;
   if (HAL_RCCEx_PeriphCLKConfig(&PeriphClkInitStruct) != HAL_OK)
   {
     Error_Handler();
   }
-  /** Enable USB Voltage detector 
-  */
-  HAL_PWREx_EnableUSBVoltageDetector();
 }
 
 /* USER CODE BEGIN 4 */
 void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef *hadc)
 {
+	//HAL_MDMA_Start_IT(&hmdma_mdma_channel40_dma1_stream0_tc_0, (uint32_t)&ADC_valuesDMA, (uint32_t)&ADC_values, 10, 1);
+}
+
+void HAL_ADC_ConvHalfCpltCallback(ADC_HandleTypeDef *hadc)
+{
 	;
 }
 
+#define SDRAM_TIMEOUT ((uint32_t)0xFFFF)
+
+#define SDRAM_MODEREG_BURST_LENGTH_1             ((uint16_t)0x0000)
+#define SDRAM_MODEREG_BURST_LENGTH_2             ((uint16_t)0x0001)
+#define SDRAM_MODEREG_BURST_LENGTH_4             ((uint16_t)0x0002)
+#define SDRAM_MODEREG_BURST_LENGTH_8             ((uint16_t)0x0003)
+#define SDRAM_MODEREG_BURST_TYPE_SEQUENTIAL      ((uint16_t)0x0000)
+#define SDRAM_MODEREG_BURST_TYPE_INTERLEAVED     ((uint16_t)0x0008)
+#define SDRAM_MODEREG_CAS_LATENCY_2              ((uint16_t)0x0020)
+#define SDRAM_MODEREG_CAS_LATENCY_3              ((uint16_t)0x0030)
+#define SDRAM_MODEREG_OPERATING_MODE_STANDARD    ((uint16_t)0x0000)
+#define SDRAM_MODEREG_WRITEBURST_MODE_PROGRAMMED ((uint16_t)0x0000)
+#define SDRAM_MODEREG_WRITEBURST_MODE_SINGLE     ((uint16_t)0x0200)
+
+//#define SDRAM_REFRESH_COUNT                   	 ((uint32_t)956)// 7.9us in cycles of 8.333333ns + 20 cycles as recommended by datasheet page 866/3289 for STM32H743
+#define SDRAM_REFRESH_COUNT                   	 ((uint32_t)0x0569)// 7.9us in cycles of 8.333333ns + 20 cycles as recommended by datasheet page 866/3289 for STM32H743
+void SDRAM_Initialization_sequence(void)
+{
+    __IO uint32_t tmpmrd = 0;
+    FMC_SDRAM_CommandTypeDef Command;
+    /* Step 1: Configure a clock configuration enable command */
+    Command.CommandMode = FMC_SDRAM_CMD_CLK_ENABLE;
+    Command.CommandTarget = FMC_SDRAM_CMD_TARGET_BANK1;
+    Command.AutoRefreshNumber = 1;
+    Command.ModeRegisterDefinition = 0;
+
+    /* Send the command */
+    HAL_SDRAM_SendCommand(&hsdram1, &Command, SDRAM_TIMEOUT);
+
+    /* Step 2: Insert 100 us minimum delay */
+    /* Inserted delay is equal to 1 ms due to systick time base unit (ms) */
+    HAL_Delay(1);
+
+    /* Step 3: Configure a PALL (precharge all) command */
+    Command.CommandMode = FMC_SDRAM_CMD_PALL;
+    Command.CommandTarget = FMC_SDRAM_CMD_TARGET_BANK1;
+    Command.AutoRefreshNumber = 1;
+    Command.ModeRegisterDefinition = 0;
+
+    /* Send the command */
+    HAL_SDRAM_SendCommand(&hsdram1, &Command, SDRAM_TIMEOUT);
+
+    /* Step 5: Program the external memory mode register */
+    tmpmrd = (uint32_t)SDRAM_MODEREG_BURST_LENGTH_4 | SDRAM_MODEREG_BURST_TYPE_SEQUENTIAL
+        | SDRAM_MODEREG_CAS_LATENCY_2 | SDRAM_MODEREG_OPERATING_MODE_STANDARD
+        | SDRAM_MODEREG_WRITEBURST_MODE_SINGLE;
+
+    Command.CommandMode = FMC_SDRAM_CMD_LOAD_MODE;
+    Command.CommandTarget = FMC_SDRAM_CMD_TARGET_BANK1;
+    Command.AutoRefreshNumber = 1;
+    Command.ModeRegisterDefinition = tmpmrd;
+
+    /* Send the command */
+    HAL_SDRAM_SendCommand(&hsdram1, &Command, SDRAM_TIMEOUT);
+
+    /* Step 4: Configure the 1st Auto Refresh command */
+    Command.CommandMode = FMC_SDRAM_CMD_AUTOREFRESH_MODE;
+    Command.CommandTarget = FMC_SDRAM_CMD_TARGET_BANK1;
+    Command.AutoRefreshNumber = 8;
+    Command.ModeRegisterDefinition = 0;
+
+    /* Send the command */
+    HAL_SDRAM_SendCommand(&hsdram1, &Command, SDRAM_TIMEOUT);
+
+    /* Step 2: Insert 100 us minimum delay */
+    /* Inserted delay is equal to 1 ms due to systick time base unit (ms) */
+    HAL_Delay(1);
+
+    /* Step 5: Configure the 2nd Auto Refresh command */
+    Command.CommandMode = FMC_SDRAM_CMD_AUTOREFRESH_MODE;
+    Command.CommandTarget = FMC_SDRAM_CMD_TARGET_BANK1;
+    Command.AutoRefreshNumber = 8;
+    Command.ModeRegisterDefinition = 0;
+
+    /* Send the command */
+    HAL_SDRAM_SendCommand(&hsdram1, &Command, SDRAM_TIMEOUT);
+
+    /* Step 6: Set the refresh rate counter */
+    /* Set the device refresh rate */
+    HAL_SDRAM_ProgramRefreshRate(&hsdram1, SDRAM_REFRESH_COUNT);
+}
 
 float randomNumber(void) {
 
@@ -269,84 +411,189 @@ void MPU_Conf(void)
 
 	MPU_Region_InitTypeDef MPU_InitStruct;
 
-	  HAL_MPU_Disable();
+	HAL_MPU_Disable();
 
-	  MPU_InitStruct.Enable = MPU_REGION_ENABLE;
+  //currently leaving D1 SRAM not configured by the MPU - just set as normal default memory.
 
-	  //D2 Domain�SRAM1
-	  MPU_InitStruct.BaseAddress = 0x30000000;
-	  // Increased region size to 256k. In Keshikan's code, this was 512 bytes (that's all that application needed).
-	  // Each audio buffer takes up the frame size * 8 (16 bits makes it *2 and stereo makes it *2 and double buffering makes it *2)
-	  // So a buffer size for read/write of 4096 would take up 64k = 4096*8 * 2 (read and write).
-	  // I increased that to 256k so that there would be room for the ADC knob inputs and other peripherals that might require DMA access.
-	  // we have a total of 256k in SRAM1 (128k, 0x30000000-0x30020000) and SRAM2 (128k, 0x30020000-0x3004000) of D2 domain.
-	  // There is an SRAM3 in D2 domain as well (32k, 0x30040000-0x3004800) that is currently not mapped by the MPU (memory protection unit) controller.
+	//the following code configures D2 and D3 SRAM
 
-	  MPU_InitStruct.Size = MPU_REGION_SIZE_256KB;
+  MPU_InitStruct.Enable = MPU_REGION_ENABLE;
 
-	  MPU_InitStruct.AccessPermission = MPU_REGION_FULL_ACCESS;
+  //D2 Domain�SRAM1
+  MPU_InitStruct.BaseAddress = 0x30000000;
+  // Increased region size to 256k. In Keshikan's code, this was 512 bytes (that's all that application needed).
+  // Each audio buffer takes up the frame size * 8 (16 bits makes it *2 and stereo makes it *2 and double buffering makes it *2)
+  // So a buffer size for read/write of 4096 would take up 64k = 4096*8 * 2 (read and write).
+  // I increased that to 256k so that there would be room for the ADC knob inputs and other peripherals that might require DMA access.
+  // we have a total of 256k in SRAM1 (128k, 0x30000000-0x30020000) and SRAM2 (128k, 0x30020000-0x3004000) of D2 domain.
+  // There is an SRAM3 in D2 domain as well (32k, 0x30040000-0x3004800) that is currently not mapped by the MPU (memory protection unit) controller.
 
-	  //AN4838
-	  MPU_InitStruct.TypeExtField = MPU_TEX_LEVEL1;
-	  MPU_InitStruct.IsCacheable = MPU_ACCESS_NOT_CACHEABLE;
-	  MPU_InitStruct.IsBufferable = MPU_ACCESS_NOT_BUFFERABLE;
-	  MPU_InitStruct.IsShareable = MPU_ACCESS_NOT_SHAREABLE;
+  MPU_InitStruct.Size = MPU_REGION_SIZE_256KB;
 
-	  //Shared Device
+  MPU_InitStruct.AccessPermission = MPU_REGION_FULL_ACCESS;
+
+  //maybe this memory should be marked as "shareable" since it is shared by two masters (the cpu and the dma)?
+  //AN4838
+  MPU_InitStruct.TypeExtField = MPU_TEX_LEVEL1;
+  MPU_InitStruct.IsCacheable = MPU_ACCESS_NOT_CACHEABLE;
+  MPU_InitStruct.IsBufferable = MPU_ACCESS_NOT_BUFFERABLE;
+  MPU_InitStruct.IsShareable = MPU_ACCESS_NOT_SHAREABLE;
+
+  //Shared Device
+	  //MPU_InitStruct.TypeExtField = MPU_TEX_LEVEL0;
+	  //MPU_InitStruct.IsCacheable = MPU_ACCESS_NOT_CACHEABLE;
+	  //MPU_InitStruct.IsBufferable = MPU_ACCESS_BUFFERABLE;
+	  //MPU_InitStruct.IsShareable = MPU_ACCESS_SHAREABLE;
+
+
+  MPU_InitStruct.Number = MPU_REGION_NUMBER1;
+
+  MPU_InitStruct.SubRegionDisable = 0x00;
+
+
+  MPU_InitStruct.DisableExec = MPU_INSTRUCTION_ACCESS_ENABLE;
+
+
+  HAL_MPU_ConfigRegion(&MPU_InitStruct);
+
+
+  //now set up D3 domain RAM
+
+  MPU_InitStruct.Enable = MPU_REGION_ENABLE;
+
+  //D3 Domain�SRAM1
+  MPU_InitStruct.BaseAddress = 0x38000000;
+
+
+  MPU_InitStruct.Size = MPU_REGION_SIZE_64KB;
+
+  MPU_InitStruct.AccessPermission = MPU_REGION_FULL_ACCESS;
+
+  //AN4838
+  MPU_InitStruct.TypeExtField = MPU_TEX_LEVEL1;
+  MPU_InitStruct.IsCacheable = MPU_ACCESS_NOT_CACHEABLE;
+  MPU_InitStruct.IsBufferable = MPU_ACCESS_NOT_BUFFERABLE;
+  MPU_InitStruct.IsShareable = MPU_ACCESS_NOT_SHAREABLE;
+
+  //Shared Device
 //	  MPU_InitStruct.TypeExtField = MPU_TEX_LEVEL0;
 //	  MPU_InitStruct.IsCacheable = MPU_ACCESS_NOT_CACHEABLE;
 //	  MPU_InitStruct.IsBufferable = MPU_ACCESS_BUFFERABLE;
 //	  MPU_InitStruct.IsShareable = MPU_ACCESS_SHAREABLE;
 
 
-	  MPU_InitStruct.Number = MPU_REGION_NUMBER0;
+  MPU_InitStruct.Number = MPU_REGION_NUMBER2;
 
-	  MPU_InitStruct.SubRegionDisable = 0x00;
-
-
-	  MPU_InitStruct.DisableExec = MPU_INSTRUCTION_ACCESS_DISABLE;
+  MPU_InitStruct.SubRegionDisable = 0x00;
 
 
-	  HAL_MPU_ConfigRegion(&MPU_InitStruct);
+  MPU_InitStruct.DisableExec = MPU_INSTRUCTION_ACCESS_ENABLE;
 
 
-	  //now set up D3 domain RAM
-
-	  MPU_InitStruct.Enable = MPU_REGION_ENABLE;
-
-	 	  //D2 Domain�SRAM1
-	 	  MPU_InitStruct.BaseAddress = 0x38000000;
+  HAL_MPU_ConfigRegion(&MPU_InitStruct);
 
 
-	 	  MPU_InitStruct.Size = MPU_REGION_SIZE_64KB;
-
-	 	  MPU_InitStruct.AccessPermission = MPU_REGION_FULL_ACCESS;
-
-	 	  //AN4838
-	 	  MPU_InitStruct.TypeExtField = MPU_TEX_LEVEL1;
-	 	  MPU_InitStruct.IsCacheable = MPU_ACCESS_CACHEABLE;
-	 	  MPU_InitStruct.IsBufferable = MPU_ACCESS_BUFFERABLE;
-	 	  MPU_InitStruct.IsShareable = MPU_ACCESS_SHAREABLE;
-
-	 	  //Shared Device
-	 //	  MPU_InitStruct.TypeExtField = MPU_TEX_LEVEL0;
-	 //	  MPU_InitStruct.IsCacheable = MPU_ACCESS_NOT_CACHEABLE;
-	 //	  MPU_InitStruct.IsBufferable = MPU_ACCESS_BUFFERABLE;
-	 //	  MPU_InitStruct.IsShareable = MPU_ACCESS_SHAREABLE;
+  HAL_MPU_Enable(MPU_PRIVILEGED_DEFAULT);
+}
 
 
-	 	  MPU_InitStruct.Number = MPU_REGION_NUMBER1;
-
-	 	  MPU_InitStruct.SubRegionDisable = 0x00;
-
-
-	 	  MPU_InitStruct.DisableExec = MPU_INSTRUCTION_ACCESS_ENABLE;
+void startTimersForLEDs(void)
+{
 
 
-	 	  HAL_MPU_ConfigRegion(&MPU_InitStruct);
+	HRTIM1->sTimerxRegs[HRTIM_TIMERINDEX_TIMER_C].TIMxCR = HRTIM_TIMCR_CONT + HRTIM_TIMCR_PREEN + HRTIM_TIMCR_TREPU;
+	HRTIM1->sTimerxRegs[HRTIM_TIMERINDEX_TIMER_C].PERxR = 0x3fff;
+	HRTIM1->sTimerxRegs[HRTIM_TIMERINDEX_TIMER_C].CMP1xR = 200;
+	HRTIM1->sTimerxRegs[HRTIM_TIMERINDEX_TIMER_C].CMP2xR = 200;
+	/* TD1 output set on TIMC period and reset on TIMC CMP1 event*/
+	HRTIM1->sTimerxRegs[HRTIM_TIMERINDEX_TIMER_C].RSTx1R = HRTIM_RST1R_CMP1;
+	HRTIM1->sTimerxRegs[HRTIM_TIMERINDEX_TIMER_C].SETx1R = HRTIM_RST1R_PER;
+
+	HRTIM1->sTimerxRegs[HRTIM_TIMERINDEX_TIMER_C].RSTx2R = HRTIM_RST2R_CMP2;
+	HRTIM1->sTimerxRegs[HRTIM_TIMERINDEX_TIMER_C].SETx2R = HRTIM_RST2R_PER;
 
 
-	  HAL_MPU_Enable(MPU_PRIVILEGED_DEFAULT);
+
+	HRTIM1->sTimerxRegs[HRTIM_TIMERINDEX_TIMER_E].TIMxCR = HRTIM_TIMCR_CONT + HRTIM_TIMCR_PREEN + HRTIM_TIMCR_TREPU;
+	HRTIM1->sTimerxRegs[HRTIM_TIMERINDEX_TIMER_E].PERxR = 0x3fff;
+	HRTIM1->sTimerxRegs[HRTIM_TIMERINDEX_TIMER_E].CMP2xR = 200;
+	/* TE2 output set on TIME period and reset on TIME CMP2 event*/
+	HRTIM1->sTimerxRegs[HRTIM_TIMERINDEX_TIMER_E].RSTx2R = HRTIM_SET2R_CMP2;
+	HRTIM1->sTimerxRegs[HRTIM_TIMERINDEX_TIMER_E].SETx2R = HRTIM_RST2R_PER;
+
+
+
+	HRTIM1->sTimerxRegs[HRTIM_TIMERINDEX_TIMER_B].TIMxCR = HRTIM_TIMCR_CONT + HRTIM_TIMCR_PREEN + HRTIM_TIMCR_TREPU;
+	HRTIM1->sTimerxRegs[HRTIM_TIMERINDEX_TIMER_B].PERxR = 0x3fff;
+	HRTIM1->sTimerxRegs[HRTIM_TIMERINDEX_TIMER_B].CMP2xR = 200;
+	/* TB2 output set on TIMB period and reset on TIMB CMP2 event*/
+	HRTIM1->sTimerxRegs[HRTIM_TIMERINDEX_TIMER_B].RSTx2R = HRTIM_SET2R_CMP2;
+	HRTIM1->sTimerxRegs[HRTIM_TIMERINDEX_TIMER_B].SETx2R = HRTIM_RST2R_PER;
+
+	HRTIM1->sTimerxRegs[HRTIM_TIMERINDEX_TIMER_D].TIMxCR = HRTIM_TIMCR_CONT + HRTIM_TIMCR_PREEN + HRTIM_TIMCR_TREPU;
+	HRTIM1->sTimerxRegs[HRTIM_TIMERINDEX_TIMER_D].PERxR = 0x3fff;
+	HRTIM1->sTimerxRegs[HRTIM_TIMERINDEX_TIMER_D].CMP1xR = 200;
+	HRTIM1->sTimerxRegs[HRTIM_TIMERINDEX_TIMER_D].CMP2xR = 200;
+
+	HRTIM1->sTimerxRegs[HRTIM_TIMERINDEX_TIMER_D].RSTx1R = HRTIM_SET1R_CMP1;
+	HRTIM1->sTimerxRegs[HRTIM_TIMERINDEX_TIMER_D].SETx1R = HRTIM_RST1R_PER;
+
+	HRTIM1->sTimerxRegs[HRTIM_TIMERINDEX_TIMER_D].RSTx2R = HRTIM_SET2R_CMP2;
+	HRTIM1->sTimerxRegs[HRTIM_TIMERINDEX_TIMER_D].SETx2R = HRTIM_RST2R_PER;
+
+
+	HRTIM1->sMasterRegs.MCR = HRTIM_MCR_TBCEN + HRTIM_MCR_TECEN + HRTIM_MCR_TCCEN + HRTIM_MCR_TDCEN;
+	HRTIM1->sCommonRegs.OENR = HRTIM_OENR_TB2OEN + HRTIM_OENR_TE2OEN + HRTIM_OENR_TC1OEN + HRTIM_OENR_TC2OEN + HRTIM_OENR_TD1OEN + HRTIM_OENR_TD2OEN ;
+	HAL_HRTIM_MspPostInit(&hhrtim);
+}
+
+volatile uint32_t r0;
+volatile uint32_t r1;
+volatile uint32_t r2;
+volatile uint32_t r3;
+volatile uint32_t r12;
+volatile uint32_t lr; // Link register.
+volatile uint32_t pc; // Program counter.
+volatile uint32_t psr;// Program status register.
+
+/*
+	static void HardFault_Handler(void)
+	{
+	    __asm volatile
+	    (
+	        " tst lr, #4                                                n"
+	        " ite eq                                                    n"
+	        " mrseq r0, msp                                             n"
+	        " mrsne r0, psp                                             n"
+	        " ldr r1, [r0, #24]                                         n"
+	        " ldr r2, handler2_address_const                            n"
+	        " bx r2                                                     n"
+	        " handler2_address_const: .word prvGetRegistersFromStack    n"
+	    );
+	}
+
+*/
+void prvGetRegistersFromStack( uint32_t *pulFaultStackAddress )
+{
+//These are volatile to try and prevent the compiler/linker optimising them
+//away as the variables never actually get used.  If the debugger won't show the
+//values of the variables, make them global by moving their declaration outside
+//of this function.
+
+
+
+	r0 = pulFaultStackAddress[ 0 ];
+	r1 = pulFaultStackAddress[ 1 ];
+	r2 = pulFaultStackAddress[ 2 ];
+	r3 = pulFaultStackAddress[ 3 ];
+
+	r12 = pulFaultStackAddress[ 4 ];
+	lr = pulFaultStackAddress[ 5 ];
+	pc = pulFaultStackAddress[ 6 ];
+	psr = pulFaultStackAddress[ 7 ];
+
+	// When the following line is hit, the variables contain the register values.
+	for( ;; );
 }
 
 /* USER CODE END 4 */

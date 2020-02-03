@@ -32,14 +32,24 @@
 #include "stm32h7xx_hal.h"
 #include "leaf.h"
 #include "main.h"
+#include "sfx.h"
+#include "ui.h"
 
-#define AUDIO_FRAME_SIZE      32
+#define AUDIO_FRAME_SIZE      128
 #define HALF_BUFFER_SIZE      AUDIO_FRAME_SIZE * 2 //number of samples per half of the "double-buffer" (twice the audio frame size because there are interleaved samples for both left and right channels)
 #define AUDIO_BUFFER_SIZE     AUDIO_FRAME_SIZE * 4 //number of samples in the whole data structure (four times the audio frame size because of stereo and also double-buffering/ping-ponging)
 
 
 extern int32_t audioOutBuffer[AUDIO_BUFFER_SIZE];
+extern int32_t audioInBuffer[AUDIO_BUFFER_SIZE];
+extern tMempool smallPool;
+extern tMempool largePool;
 extern uint8_t codecReady;
+extern uint8_t writeParameterFlag;
+extern float sample;
+extern float rightOut;
+extern float rightIn;
+extern float smoothedADC[12];
 
 /* Exported types ------------------------------------------------------------*/
 typedef enum
@@ -55,6 +65,14 @@ typedef enum
 #define SAMPLE_RATE 48000.f
 #endif
 
+
+
+
+typedef enum BOOL {
+	FALSE = 0,
+	TRUE
+} BOOL;
+
 #define INV_SAMPLE_RATE 1.f/SAMPLE_RATE
 #define SAMPLE_RATE_MS (SAMPLE_RATE / 1000.f)
 #define INV_SR_MS 1.f/SAMPLE_RATE_MS
@@ -66,10 +84,18 @@ typedef enum
 /* Exported functions ------------------------------------------------------- */
 void audioInit(I2C_HandleTypeDef* hi2c, SAI_HandleTypeDef* hsaiOut, SAI_HandleTypeDef* hsaiIn);
 
+static void initFunctionPointers(void);
+
 void audioFrame(uint16_t buffer_offset);
 
 void DMA1_TransferCpltCallback(DMA_HandleTypeDef *hdma);
 void DMA1_HalfTransferCpltCallback(DMA_HandleTypeDef *hdma);
+
+void freePreset(GeneraPreset preset);
+void allocPreset(GeneraPreset preset);
+
+
+
 #endif /* __AUDIOSTREAM_H */
 
 /************************ (C) COPYRIGHT STMicroelectronics *****END OF FILE****/

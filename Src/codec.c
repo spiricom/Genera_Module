@@ -96,13 +96,13 @@ void AudioCodec_init(I2C_HandleTypeDef* hi2c) {
 	//HAL_Delay(1); // might not be necessary
 
 	myI2cData[0] = 0x04;
-	myI2cData[1] = 0x01;
+	myI2cData[1] = 0x9;
 	testVal = HAL_I2C_Master_Transmit(hi2c, CODEC_I2C_ADDRESS, myI2cData, i2cDataSize, I2Ctimeout);
 
 	//HAL_Delay(1); // might not be necessary
 
 	myI2cData[0] = 0x05;
-	myI2cData[1] = 0x01;
+	myI2cData[1] = 0x9;
 	testVal = HAL_I2C_Master_Transmit(hi2c, CODEC_I2C_ADDRESS, myI2cData, i2cDataSize, I2Ctimeout);
 
 	//HAL_Delay(1); // might not be necessary
@@ -115,6 +115,7 @@ void AudioCodec_init(I2C_HandleTypeDef* hi2c) {
 
 	//turn off power down bit to start things cookin'
 	myI2cData[0] = 0x07;
+	//myI2cData[1] = 0x12; //for only dry input passed through
 	myI2cData[1] = 0x02;
 	HAL_I2C_Master_Transmit(hi2c, CODEC_I2C_ADDRESS, myI2cData, i2cDataSize, I2Ctimeout);
 

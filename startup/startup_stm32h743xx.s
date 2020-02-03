@@ -59,7 +59,7 @@ defined in linker script */
   .weak  Reset_Handler
   .type  Reset_Handler, %function
 Reset_Handler:  
-  ldr   sp, =_estack      /* set stack pointer */
+ ldr   sp, =_estack      /* set stack pointer */
 
 /* Copy the data segment initializers from flash to SRAM */  
   movs  r1, #0
@@ -107,9 +107,34 @@ LoopFillZerobss:
 */
     .section  .text.Default_Handler,"ax",%progbits
 Default_Handler:
+  /* Load the address of the interrupt control register into r3. */
+  ldr r3, NVIC_INT_CTRL_CONST
+  /* Load the value of the interrupt control register into r2 from the
+  address held in r3. */
+  ldr r2, [r3, #0]
+  /* The interrupt number is in the least significant byte - clear all
+  other bits. */
+  uxtb r2, r2
+
+
+
+	        tst lr, #4
+	        ite eq
+	        mrseq r0, msp
+	        mrsne r0, psp
+	        ldr r1, [r0, #24]
+	        ldr r2, handler2_address_const
+	        bx r2
+	        handler2_address_const: .word prvGetRegistersFromStack
 Infinite_Loop:
+  /* Now sit in an infinite loop - the number of the executing interrupt
+  is held in r2. */
   b  Infinite_Loop
   .size  Default_Handler, .-Default_Handler
+
+.align 4
+/* The address of the NVIC interrupt control register. */
+NVIC_INT_CTRL_CONST: .word 0xe000ed04
 /******************************************************************************
 *
 * The minimal vector table for a Cortex M. Note that the proper constructs
