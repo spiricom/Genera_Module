@@ -16,6 +16,8 @@
 t808Kick myKick;
 t808Snare mySnare;
 tEnvelopeFollower myAtkDtk[2];
+t808Hihat myHihat;
+
 
 tFormantShifter fs;
 tAutotune autotuneMono;
@@ -118,21 +120,7 @@ uint32_t freeze = 0;
 
 void initGlobalSFXObjects()
 {
-	calculatePeriodArray();
-
-	tPoly_init(&poly, NUM_VOC_VOICES);
-	tPoly_setPitchGlideActive(&poly, FALSE);
-	for (int i = 0; i < NUM_VOC_VOICES; i++)
-	{
-		tRamp_init(&polyRamp[i], 10.0f, 1);
-	}
-
-
-
-
-	tRamp_init(&nearWetRamp, 10.0f, 1);
-	tRamp_init(&nearDryRamp, 10.0f, 1);
-	tRamp_init(&comp, 10.0f, 1);
+	;
 }
 
 ///1 vocoder internal poly
@@ -213,6 +201,7 @@ void SFXDattorroFree(void)
 }
 
 
+uint8_t levModeStored = 0;
 
 //17 Living String
 void SFXLivingStringAlloc()
@@ -228,32 +217,60 @@ void SFXLivingStringAlloc()
 
 void SFXLivingStringFrame()
 {
-	uiParams[0] = LEAF_clip(10.0f, mtof(((smoothedADC[0] + (smoothedADC[8] * smoothedADC[5])) * 135.0f)), 19000.0f); //freq
-	uiParams[1] = smoothedADC[0] + smoothedADC[9]; //detune
+	uiParams[0] = LEAF_clip(1.0f, mtof((smoothedADC[0] * 72.0f) + (ADC_values[8] * 0.002f)), 20000.0f); // update frequency directly from knob 1
+	uiParams[1] = smoothedADC[1]; //detune
 	uiParams[2] = LEAF_clip(0.9f, (((smoothedADC[2] + smoothedADC[9]) * 0.09999999f) + 0.9f), 0.999999999f); //decay
 	uiParams[3] = LEAF_clip(10.0f, mtof(((smoothedADC[3]+ smoothedADC[10])* 130.0f)+12.0f), 19000.0f); //lowpass
 	uiParams[4] = LEAF_clip(0.001f,((smoothedADC[4] + smoothedADC[11])* 0.5) + 0.02f, 1.0f);//pickPos
+	uiParams[5] = LEAF_clip(0.001f,(smoothedADC[5] + 0.02f), 1.0f);//prepAmount
+
+
+
+	if (buttonPressed[1] == 1)
+	{
+		if (levModeStored == 1)
+		{
+			levModeStored = 0;
+			setLED_B(0);
+		}
+		else
+		{
+			levModeStored = 1;
+			setLED_B(255);
+		}
+		buttonPressed[1] = 0;
+	}
+
 	for (int i = 0; i < NUM_STRINGS; i++)
 	{
 		tLivingString_setFreq(&theString[i], (i + (1.0f+(myDetune[i] * uiParams[1]))) * uiParams[0]);
 		tLivingString_setDecay(&theString[i], uiParams[2]);
 		tLivingString_setDampFreq(&theString[i], uiParams[3]);
 		tLivingString_setPickPos(&theString[i], uiParams[4]);
+		tLivingString_setPrepIndex(&theString[i], uiParams[5]);
+		tLivingString_setLevMode(&theString[i], levModeStored);
 	}
+
 
 }
 
 
 void SFXLivingStringTick(float audioIn)
 {
+	rightOut = 0.0f;
 	for (int i = 0; i < NUM_STRINGS; i++)
 	{
-		sample += tLivingString_tick(&theString[i], audioIn);
+		if (i %2 ==0)
+		{
+			sample += (tLivingString_tick(&theString[i], audioIn) * 0.45f);
+		}
+		else
+		{
+			rightOut += (tLivingString_tick(&theString[i], audioIn) * 0.45f);
+		}
 	}
-	sample *= 0.0625f;
-	rightOut = sample;
-
-
+	sample = tanhf(sample);
+	rightOut = tanhf(rightOut);
 }
 
 void SFXLivingStringFree(void)
@@ -267,13 +284,16 @@ void SFXLivingStringFree(void)
 
 
 //Kick and Snare
-
+uint8_t kickTriggered = 0;
+uint8_t snareTriggered = 0;
 void SFXKickAndSnareAlloc()
 {
 	t808Snare_init(&mySnare);
 	t808Kick_init(&myKick);
 	tEnvelopeFollower_init(&myAtkDtk[0], 0.1f, .99f);
 	tEnvelopeFollower_init(&myAtkDtk[1], 0.1f, .99f);
+	snareTriggered = 0;
+	kickTriggered = 0;
 }
 
 void SFXKickAndSnareFrame()
@@ -282,18 +302,14 @@ void SFXKickAndSnareFrame()
 
 }
 
-uint8_t kickTriggered = 0;
-uint8_t snareTriggered = 0;
+
 void SFXKickAndSnareTick(float audioIn)
 {
 	uiParams[0] = LEAF_clip(0.0f, smoothedADC[0] + smoothedADC[8], 2.0f);
 
-	//if digital input on jack 5, then trigger snare
+	//if trigger input on jack 5, then trigger snare
 
-	float leftEnvelope = tEnvelopeFollower_tick(&myAtkDtk[0], audioIn);
-	float rightEnvelope = tEnvelopeFollower_tick(&myAtkDtk[1], rightIn);
-
-	if (leftEnvelope > 0.5f)
+	if (audioIn > 0.5f)
 	{
 		if (snareTriggered == 0)
 		{
@@ -301,13 +317,13 @@ void SFXKickAndSnareTick(float audioIn)
 			snareTriggered = 1;
 		}
 	}
-	else if (leftEnvelope < 0.05f)
+	else if (audioIn < 0.05f)
 	{
 		snareTriggered = 0;
 	}
 
 	//if digital input on jack 6, then trigger kick
-	if (rightEnvelope > 0.5f)
+	if (rightIn > 0.5f)
 	{
 		if (kickTriggered == 0)
 		{
@@ -315,7 +331,7 @@ void SFXKickAndSnareTick(float audioIn)
 			kickTriggered = 1;
 		}
 	}
-	else if (rightEnvelope < 0.05f)
+	else if (rightIn < 0.05f)
 	{
 		kickTriggered = 0;
 	}
@@ -328,10 +344,11 @@ void SFXKickAndSnareTick(float audioIn)
 	t808Snare_setNoiseDecay(&mySnare, (smoothedADC[3] * 100.0f) + (smoothedADC[10] * 100.0f)); //knob 4 sets snare noise decay time (added with jack 3 CV input)
 	t808Snare_setTone1Freq(&mySnare, uiParams[1]);
 	t808Snare_setTone2Freq(&mySnare, uiParams[1] * 1.5f);
-	rightOut = t808Snare_tick(&mySnare);//
+	sample = t808Snare_tick(&mySnare);//
 	LEAF_shaper(sample, 1.0f);
 
-
+	t808Kick_setSighAmount(&myKick, (smoothedADC[6]) * 30.0f);
+	t808Kick_setChirpAmount(&myKick, (smoothedADC[7]) * 8.0f);
 	t808Kick_setToneFreq(&myKick, LEAF_midiToFrequency(((smoothedADC[4]* 30.0f) + smoothedADC[10] * 30.0f)+ 14.0f)); //knob 5 sets kick freq
 	t808Kick_setToneDecay(&myKick, (smoothedADC[5] * 1000.0f) + (smoothedADC[11] * 1000.0f)); //knob 6 set kick decay (added to jack 4 CV in)
 	rightOut = LEAF_shaper(t808Kick_tick(&myKick), 1.0f);
@@ -345,6 +362,157 @@ void SFXKickAndSnareFree(void)
 	tEnvelopeFollower_free(&myAtkDtk[0]);
 	tEnvelopeFollower_free(&myAtkDtk[1]);
 }
+
+
+//Hihat
+uint8_t hatTriggered = 0;
+uint8_t sampleTriggered = 0;
+void SFXHihatAlloc()
+{
+	t808Hihat_init(&myHihat);
+
+	hatTriggered = 0;
+
+	tBuffer_init(&buff2, 12000.0f);
+	tBuffer_setRecordMode(&buff2, RecordOneShot);
+	tSampler_init(&sampler, &buff2);
+	tSampler_setMode(&sampler, PlayLoop);
+	tEnvelopeFollower_init(&envfollow, 0.05f, 0.9999f);
+	tSampler_play(&sampler);
+}
+
+void SFXHihatFrame()
+{
+
+
+}
+
+
+void SFXHihatTick(float audioIn)
+{
+	uiParams[0] = LEAF_clip(0.0f, smoothedADC[0] + smoothedADC[8], 2.0f);
+
+	if (audioIn > 0.5f)
+	{
+		if (hatTriggered == 0)
+		{
+			t808Hihat_on(&myHihat, uiParams[0]);
+			hatTriggered = 1;
+		}
+	}
+	else if (audioIn < 0.05f)
+	{
+		hatTriggered = 0;
+	}
+
+	/*
+	//if digital input on jack 6, then trigger kick
+	if (rightEnvelope > 0.5f)
+	{
+		if (kickTriggered == 0)
+		{
+			t808Kick_on(&myKick, uiParams[0]);
+			kickTriggered = 1;
+		}
+	}
+	else if (rightEnvelope < 0.05f)
+	{
+		kickTriggered = 0;
+	}
+*/
+	//OK, now some audio stuff
+	uiParams[1] = LEAF_clip(0.0f, LEAF_midiToFrequency(smoothedADC[4] * 100.0f), 23000.0f);
+
+	t808Hihat_setOscBandpassFreq(&myHihat, LEAF_clip (500.0f, (smoothedADC[5] * 9000.0f) + (smoothedADC[11] * 9000.0f) + 500.0f, 18000.0f));
+	t808Hihat_setHighpassFreq(&myHihat, LEAF_midiToFrequency(smoothedADC[2] * 127.0f)); //knob 4 sets hipass freq
+	t808Hihat_setOscNoiseMix(&myHihat, smoothedADC[1]);
+	t808Hihat_setDecay(&myHihat, (smoothedADC[3] * 1000.0f) + (smoothedADC[10] * 1000.0f));
+	t808Hihat_setOscFreq(&myHihat, uiParams[1]);
+	t808Hihat_setStickBandPassFreq(&myHihat, (smoothedADC[6] * 1000.0f) + 2500.0f);
+	t808Hihat_setStickBandPassQ(&myHihat, (smoothedADC[7] * 2.0f) + 0.2f);
+
+	sample = t808Hihat_tick(&myHihat) * 1.2f;
+	LEAF_shaper(sample, 1.0f);
+
+
+
+
+	currentPower = tEnvelopeFollower_tick(&envfollow, rightIn);
+	samp_thresh = 1.0f - smoothedADC[0];
+	uiParams[0] = samp_thresh;
+	int window_size = LEAF_clip(3, (smoothedADC[1] + smoothedADC[8]) * 10000.0f, 10000.0f);
+
+	float rate = LEAF_clip(0.25f, fastexp2f(((smoothedADC[6] + smoothedADC[10]) * 8.0f) - 4.0f), 4.0f);
+	uiParams[3] = smoothedADC[3] * 1000.0f;
+	crossfadeLength = uiParams[3];
+
+	tSampler_setCrossfadeLength(&sampler, crossfadeLength);
+
+	if ((currentPower > (samp_thresh)) && (currentPower > previousPower + 0.001f) && (samp_triggered == 0) && (sample_countdown == 0))
+	{
+		samp_triggered = 1;
+		setLED_C(255);
+		tBuffer_record(&buff2);
+		buff2->recordedLength = buff2->bufferLength;
+		sample_countdown = window_size + 24;//arbitrary extra time to avoid resampling while playing previous sample - better solution would be alternating buffers and crossfading
+		powerCounter = 1000;
+	}
+
+	if (sample_countdown > 0)
+	{
+		sample_countdown--;
+	}
+
+	tSampler_setRate(&sampler, rate);
+	tSampler_setEnd(&sampler,window_size);
+	tBuffer_tick(&buff2, rightIn);
+	//on it's way down
+	if (currentPower <= previousPower)
+	{
+		if (powerCounter > 0)
+		{
+			powerCounter--;
+		}
+		else if (samp_triggered == 1)
+		{
+			setLED_C(0);
+			samp_triggered = 0;
+		}
+	}
+	if (buttonPressed[3])
+	{
+		if (samplerMode == PlayLoop)
+		{
+			tSampler_setMode(&sampler, PlayBackAndForth);
+			samplerMode = PlayBackAndForth;
+			setLED_D(255);
+			buttonPressed[3] = 0;
+		}
+		else if (samplerMode == PlayBackAndForth)
+		{
+			tSampler_setMode(&sampler, PlayLoop);
+			samplerMode = PlayLoop;
+			setLED_D(0);
+			buttonPressed[3] = 0;
+		}
+
+	}
+	rightOut = tSampler_tick(&sampler);
+	previousPower = currentPower;
+
+}
+
+void SFXHihatFree(void)
+{
+	t808Hihat_free(&myHihat);
+	tBuffer_free(&buff2);
+	tSampler_free(&sampler);
+	tEnvelopeFollower_free(&envfollow);
+}
+
+
+
+
 
 // midi functions
 

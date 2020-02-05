@@ -84,7 +84,7 @@ void audioInit(I2C_HandleTypeDef* hi2c, SAI_HandleTypeDef* hsaiOut, SAI_HandleTy
 	//ramps to smooth the knobs
 	for (int i = 0; i < 12; i++)
 	{
-		tRamp_init(&adc[i], 10.0f, 1); //set all ramps for knobs to be 10ms ramp time and let the init function know they will be ticked every sample
+		tRamp_init(&adc[i], 5.0f, 1); //set all ramps for knobs to be 10ms ramp time and let the init function know they will be ticked every sample
 	}
 
 	initGlobalSFXObjects();
@@ -192,7 +192,7 @@ void audioFrame(uint16_t buffer_offset)
 float audioTickL(float audioIn)
 {
 	sample = 0.0f;
-
+	rightOut = 0.0f;
 	//knobs are hooked up backwards
 	for (int i = 0; i < 8; i++)
 	{
@@ -209,6 +209,7 @@ float audioTickL(float audioIn)
 
 	bufferCleared = FALSE;
 
+	/*
 	if ((audioIn >= 0.999999f) || (audioIn <= -0.999999f))
 	{
 		setLED_C(255);
@@ -224,11 +225,11 @@ float audioTickL(float audioIn)
 		setLED_C(0);
 		clipped[0] = 0;
 	}
-
+*/
 
 
 	tickFunctions[currentPreset](audioIn);
-
+/*
 	if ((sample >= 0.999999f) || (sample <= -0.999999f))
 	{
 		setLED_D(255);
@@ -244,6 +245,7 @@ float audioTickL(float audioIn)
 		setLED_D(0);
 		clipped[2] = 0;
 	}
+	*/
 	return sample;
 }
 
@@ -272,6 +274,11 @@ static void initFunctionPointers(void)
 	frameFunctions[KickAndSnare] = SFXKickAndSnareFrame;
 	tickFunctions[KickAndSnare] = SFXKickAndSnareTick;
 	freeFunctions[KickAndSnare] = SFXKickAndSnareFree;
+
+	allocFunctions[Hihat] = SFXHihatAlloc;
+	frameFunctions[Hihat] = SFXHihatFrame;
+	tickFunctions[Hihat] = SFXHihatTick;
+	freeFunctions[Hihat] = SFXHihatFree;
 }
 
 

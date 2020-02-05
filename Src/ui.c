@@ -21,7 +21,7 @@ uint8_t buttonReleased[NUM_BUTTONS];
 float uiParams[12];
 uint32_t currentTuning = 0;
 
-uint8_t colorsForPresets[3][3] = {{120, 100, 100},{50,150, 20}, {0,0,70}};
+uint8_t colorsForPresets[4][3] = {{120, 100, 100},{50,150, 20}, {0,0,70}, {0,70,90}};
 GeneraPreset currentPreset = 0;
 GeneraPreset previousPreset = PresetNil;
 uint8_t loadingPreset = 0;

@@ -19,6 +19,7 @@ typedef enum _GeneraPreset
 	DattorroReverb = 0,
 	LivingString,
 	KickAndSnare,
+	Hihat,
 	PresetNil
 } GeneraPreset;
 

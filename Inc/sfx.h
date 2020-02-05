@@ -46,6 +46,12 @@ void SFXKickAndSnareFrame();
 void SFXKickAndSnareTick(float audioIn);
 void SFXKickAndSnareFree(void);
 
+
+void SFXHihatAlloc();
+void SFXHihatFrame();
+void SFXHihatTick(float audioIn);
+void SFXHihatFree(void);
+
 // MIDI FUNCTIONS
 void noteOn(int key, int velocity);
 void noteOff(int key, int velocity);
